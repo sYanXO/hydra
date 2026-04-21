@@ -7,7 +7,7 @@ help:
 	@echo "  up-db         Start local Postgres via docker compose"
 	@echo "  down-db       Stop local Postgres"
 	@echo "  logs-db       Tail Postgres logs"
-	@echo "  migrate       Apply SQL migrations to local Postgres"
+	@echo "  migrate       Apply SQL migrations (docker if available, else host psql)"
 	@echo "  test          Run Go tests"
 	@echo "  fmt           Run gofmt (writes changes)"
 	@echo "  fmt-check     Verify gofmt is clean (no writes)"
@@ -27,7 +27,32 @@ logs-db:
 	docker compose logs -f postgres
 
 migrate:
-	psql "$(DB_URL)" -f migrations/0001_init.sql
+	@if command -v docker >/dev/null 2>&1; then \
+		set -e; \
+		docker compose up -d postgres; \
+		echo "waiting for postgres to be ready..."; \
+		for i in $$(seq 1 30); do \
+			if docker compose exec -T postgres pg_isready -U hydra -d hydra >/dev/null 2>&1; then \
+				break; \
+			fi; \
+			sleep 1; \
+		done; \
+		docker compose exec -T postgres pg_isready -U hydra -d hydra >/dev/null; \
+		for f in $$(ls migrations/*.sql | sort); do \
+			echo "applying $$f via docker"; \
+			docker compose exec -T postgres psql -h localhost -U hydra -d hydra -v ON_ERROR_STOP=1 -f /dev/stdin < $$f; \
+		done; \
+	elif command -v psql >/dev/null 2>&1; then \
+		set -e; \
+		for f in $$(ls migrations/*.sql | sort); do \
+			echo "applying $$f via host psql"; \
+			psql "$(DB_URL)" -v ON_ERROR_STOP=1 -f $$f; \
+		done; \
+	else \
+		echo "error: neither docker nor psql is available in PATH"; \
+		echo "install Docker Desktop/Engine OR install postgresql-client (psql)"; \
+		exit 127; \
+	fi
 
 test:
 	go test ./...

@@ -9,3 +9,14 @@ type User struct {
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
+
+type Message struct {
+	ServerMessageID string
+	ToUserID        string
+	FromUserID      string
+	MessageID       string
+	EnvelopeJSON    []byte
+	Status          string
+	ReceivedAt      time.Time
+	ExpiresAt       time.Time
+}

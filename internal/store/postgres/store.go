@@ -49,6 +49,22 @@ func (s *Store) GetUser(userID string) (storetypes.User, bool, error) {
 	return u, true, nil
 }
 
+func (s *Store) CreateMessage(m storetypes.Message) (bool, error) {
+	res, err := s.db.Exec(`
+		INSERT INTO messages (server_message_id, to_user_id, from_user_id, message_id, envelope_json, status, received_at, expires_at)
+		VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
+		ON CONFLICT (from_user_id, to_user_id, message_id) DO NOTHING
+	`, m.ServerMessageID, m.ToUserID, m.FromUserID, m.MessageID, string(m.EnvelopeJSON), m.Status, m.ReceivedAt, m.ExpiresAt)
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected == 1, nil
+}
+
 func (s *Store) CheckAndStoreNonce(userID, nonce string, now time.Time, ttl time.Duration) (bool, error) {
 	_, err := s.db.Exec(`
 		DELETE FROM registration_nonces

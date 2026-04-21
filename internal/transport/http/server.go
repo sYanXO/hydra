@@ -14,11 +14,12 @@ import (
 
 type Server struct {
 	registerService *service.RegisterService
+	messageService  *service.MessageService
 	mux             *http.ServeMux
 }
 
-func NewServer(registerService *service.RegisterService) *Server {
-	s := &Server{registerService: registerService, mux: http.NewServeMux()}
+func NewServer(registerService *service.RegisterService, messageService *service.MessageService) *Server {
+	s := &Server{registerService: registerService, messageService: messageService, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -31,6 +32,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("POST /users/register", s.handleRegister)
 	s.mux.HandleFunc("GET /users/{id}/keys", s.handleGetUserKeys)
+	s.mux.HandleFunc("POST /messages", s.handlePostMessage)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -100,6 +102,35 @@ func (s *Server) handleGetUserKeys(w http.ResponseWriter, r *http.Request) {
 		"dh_key_x25519":        result.DHKeyX25519,
 		"keyset_version":       result.KeysetVersion,
 		"updated_at":           result.UpdatedAt.Format(time.RFC3339),
+	})
+}
+
+func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	var req protocol.MessageEnvelope
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Malformed JSON.", false)
+		return
+	}
+	result, err := s.messageService.SendMessage(req)
+	if err != nil {
+		switch {
+		case errors.Is(err, protocol.ErrInvalidEnvelope):
+			writeError(w, http.StatusBadRequest, "invalid_envelope", "Envelope validation failed.", false)
+		case errors.Is(err, protocol.ErrRecipientNotFound):
+			writeError(w, http.StatusNotFound, "recipient_not_found", "Recipient does not exist.", false)
+		case errors.Is(err, protocol.ErrDuplicateMessage):
+			writeError(w, http.StatusConflict, "duplicate_message_id", "Duplicate message_id for sender-recipient pair.", false)
+		default:
+			writeError(w, http.StatusInternalServerError, "internal_error", "Internal server error.", true)
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":                true,
+		"server_message_id": result.ServerMessageID,
+		"received_at":       result.ReceivedAt.Format(time.RFC3339),
 	})
 }
 

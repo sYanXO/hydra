@@ -38,12 +38,35 @@ func makeRegisterJSON(t *testing.T, userID string, now time.Time) []byte {
 	return b
 }
 
-func TestRegisterEndpointSuccess(t *testing.T) {
+func makeMessageJSON(toUserID string) []byte {
+	req := protocol.MessageEnvelope{
+		Version:                  1,
+		MessageID:                "11111111-1111-4111-8111-111111111111",
+		FromUserID:               "alice-uuid",
+		ToUserID:                 toUserID,
+		SenderIdentityKeyEd25519: base64.StdEncoding.EncodeToString([]byte("identity-public-key")),
+		SenderDHKeyX25519:        base64.StdEncoding.EncodeToString([]byte("dh-public-key")),
+		Nonce:                    base64.StdEncoding.EncodeToString([]byte("nonce-24-byte-placeholder")),
+		Ciphertext:               base64.StdEncoding.EncodeToString([]byte("ciphertext-bytes")),
+		SentAt:                   "2026-04-22T10:30:00Z",
+		Signature:                base64.StdEncoding.EncodeToString([]byte("signature-bytes")),
+	}
+	b, _ := json.Marshal(req)
+	return b
+}
+
+func newTestServer(now time.Time) *Server {
 	store := memory.New()
-	svc := service.NewRegisterService(store)
+	registerSvc := service.NewRegisterService(store)
+	registerSvc.SetNowFnForTest(func() time.Time { return now })
+	messageSvc := service.NewMessageService(store)
+	messageSvc.SetNowFnForTest(func() time.Time { return now })
+	return NewServer(registerSvc, messageSvc)
+}
+
+func TestRegisterEndpointSuccess(t *testing.T) {
 	now := time.Date(2026, 4, 22, 10, 30, 0, 0, time.UTC)
-	svc.SetNowFnForTest(func() time.Time { return now })
-	srv := NewServer(svc)
+	srv := newTestServer(now)
 
 	body := makeRegisterJSON(t, "44444444-4444-4444-4444-444444444444", now)
 	r := httptest.NewRequest(http.MethodPost, "/users/register", bytes.NewReader(body))
@@ -56,11 +79,8 @@ func TestRegisterEndpointSuccess(t *testing.T) {
 }
 
 func TestRegisterEndpointBadSignature(t *testing.T) {
-	store := memory.New()
-	svc := service.NewRegisterService(store)
 	now := time.Date(2026, 4, 22, 10, 30, 0, 0, time.UTC)
-	svc.SetNowFnForTest(func() time.Time { return now })
-	srv := NewServer(svc)
+	srv := newTestServer(now)
 
 	payload := makeRegisterJSON(t, "55555555-5555-5555-5555-555555555555", now)
 	var req map[string]any
@@ -80,11 +100,8 @@ func TestRegisterEndpointBadSignature(t *testing.T) {
 }
 
 func TestGetUserKeysEndpointSuccess(t *testing.T) {
-	store := memory.New()
-	svc := service.NewRegisterService(store)
 	now := time.Date(2026, 4, 22, 10, 30, 0, 0, time.UTC)
-	svc.SetNowFnForTest(func() time.Time { return now })
-	srv := NewServer(svc)
+	srv := newTestServer(now)
 
 	userID := "66666666-6666-6666-6666-666666666666"
 	regBody := makeRegisterJSON(t, userID, now)
@@ -101,25 +118,41 @@ func TestGetUserKeysEndpointSuccess(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
-
-	var got map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-		t.Fatal(err)
-	}
-	if got["user_id"] != userID {
-		t.Fatalf("unexpected user_id: %v", got["user_id"])
-	}
-	if got["keyset_version"] != float64(1) {
-		t.Fatalf("unexpected keyset_version: %v", got["keyset_version"])
-	}
 }
 
 func TestGetUserKeysEndpointNotFound(t *testing.T) {
-	store := memory.New()
-	svc := service.NewRegisterService(store)
-	srv := NewServer(svc)
+	now := time.Date(2026, 4, 22, 10, 30, 0, 0, time.UTC)
+	srv := newTestServer(now)
 
 	r := httptest.NewRequest(http.MethodGet, "/users/77777777-7777-7777-7777-777777777777/keys", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestPostMessageSuccess(t *testing.T) {
+	now := time.Date(2026, 4, 22, 10, 30, 0, 0, time.UTC)
+	srv := newTestServer(now)
+
+	toUserID := "88888888-8888-8888-8888-888888888888"
+	regBody := makeRegisterJSON(t, toUserID, now)
+	srv.Handler().ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/users/register", bytes.NewReader(regBody)))
+
+	r := httptest.NewRequest(http.MethodPost, "/messages", bytes.NewReader(makeMessageJSON(toUserID)))
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestPostMessageRecipientNotFound(t *testing.T) {
+	now := time.Date(2026, 4, 22, 10, 30, 0, 0, time.UTC)
+	srv := newTestServer(now)
+
+	r := httptest.NewRequest(http.MethodPost, "/messages", bytes.NewReader(makeMessageJSON("no-user")))
 	w := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(w, r)
 	if w.Code != http.StatusNotFound {

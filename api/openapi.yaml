@@ -93,6 +93,42 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
 
+  /messages:
+    post:
+      summary: Send encrypted message envelope
+      operationId: postMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageEnvelopeRequest'
+      responses:
+        '200':
+          description: Message accepted for relay
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostMessageResponse'
+        '400':
+          description: Invalid envelope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Recipient not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: Duplicate message id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
 components:
   schemas:
     RegisterRequest:
@@ -159,6 +195,59 @@ components:
           type: integer
           minimum: 1
         updated_at:
+          type: string
+          format: date-time
+
+    MessageEnvelopeRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - version
+        - message_id
+        - from_user_id
+        - to_user_id
+        - sender_identity_key_ed25519
+        - sender_dh_key_x25519
+        - nonce
+        - ciphertext
+        - sent_at
+        - signature
+      properties:
+        version:
+          type: integer
+          enum: [1]
+        message_id:
+          type: string
+          format: uuid
+        from_user_id:
+          type: string
+        to_user_id:
+          type: string
+        sender_identity_key_ed25519:
+          type: string
+        sender_dh_key_x25519:
+          type: string
+        nonce:
+          type: string
+        ciphertext:
+          type: string
+        sent_at:
+          type: string
+          format: date-time
+        signature:
+          type: string
+
+    PostMessageResponse:
+      type: object
+      additionalProperties: false
+      required: [ok, server_message_id, received_at]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        server_message_id:
+          type: string
+        received_at:
           type: string
           format: date-time
 

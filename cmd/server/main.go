@@ -23,7 +23,8 @@ func main() {
 	defer cleanup()
 
 	registerService := service.NewRegisterService(registerStore)
-	server := httptransport.NewServer(registerService)
+	messageService := service.NewMessageService(registerStore)
+	server := httptransport.NewServer(registerService, messageService)
 
 	log.Printf("hydra backend listening on %s (store=%s)", addr, storeMode)
 	if err := http.ListenAndServe(addr, server.Handler()); err != nil {
@@ -31,7 +32,12 @@ func main() {
 	}
 }
 
-func buildRegisterStore(mode string) (service.RegisterStore, func()) {
+type backendStore interface {
+	service.RegisterStore
+	service.MessageStore
+}
+
+func buildRegisterStore(mode string) (backendStore, func()) {
 	if mode != "postgres" {
 		return memory.New(), func() {}
 	}

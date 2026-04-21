@@ -8,15 +8,17 @@ import (
 )
 
 type Store struct {
-	mu     sync.RWMutex
-	users  map[string]storetypes.User
-	nonces map[string]map[string]time.Time
+	mu       sync.RWMutex
+	users    map[string]storetypes.User
+	nonces   map[string]map[string]time.Time
+	messages map[string]storetypes.Message
 }
 
 func New() *Store {
 	return &Store{
-		users:  make(map[string]storetypes.User),
-		nonces: make(map[string]map[string]time.Time),
+		users:    make(map[string]storetypes.User),
+		nonces:   make(map[string]map[string]time.Time),
+		messages: make(map[string]storetypes.Message),
 	}
 }
 
@@ -35,6 +37,17 @@ func (s *Store) GetUser(userID string) (storetypes.User, bool, error) {
 	defer s.mu.RUnlock()
 	u, ok := s.users[userID]
 	return u, ok, nil
+}
+
+func (s *Store) CreateMessage(m storetypes.Message) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k := m.FromUserID + "|" + m.ToUserID + "|" + m.MessageID
+	if _, exists := s.messages[k]; exists {
+		return false, nil
+	}
+	s.messages[k] = m
+	return true, nil
 }
 
 func (s *Store) CheckAndStoreNonce(userID, nonce string, now time.Time, ttl time.Duration) (bool, error) {
