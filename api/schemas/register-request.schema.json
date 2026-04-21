@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hydra.local/schemas/register-request.schema.json",
+  "title": "RegisterRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "user_id",
+    "identity_key_ed25519",
+    "dh_key_x25519",
+    "nonce",
+    "signed_at",
+    "signature"
+  ],
+  "properties": {
+    "user_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "identity_key_ed25519": {
+      "type": "string",
+      "minLength": 1,
+      "contentEncoding": "base64"
+    },
+    "dh_key_x25519": {
+      "type": "string",
+      "minLength": 1,
+      "contentEncoding": "base64"
+    },
+    "nonce": {
+      "type": "string",
+      "minLength": 1,
+      "contentEncoding": "base64"
+    },
+    "signed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "signature": {
+      "type": "string",
+      "minLength": 1,
+      "contentEncoding": "base64"
+    }
+  }
+}

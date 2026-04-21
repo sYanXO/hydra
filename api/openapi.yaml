@@ -1,0 +1,182 @@
+openapi: 3.1.0
+info:
+  title: Hydra Private Chat API
+  version: 0.0.1
+  description: |
+    v0 contract-first API spec for Hydra backend.
+servers:
+  - url: http://localhost:8080
+paths:
+  /health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service health
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, time]
+                properties:
+                  ok:
+                    type: boolean
+                  time:
+                    type: string
+                    format: date-time
+
+  /users/register:
+    post:
+      summary: Register a new user key bundle
+      operationId: registerUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '200':
+          description: Registration successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '401':
+          description: Signature verification failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: Nonce reuse or user already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /users/{id}/keys:
+    get:
+      summary: Get a user's public key bundle
+      operationId: getUserKeys
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+          description: user_id
+      responses:
+        '200':
+          description: Public keys found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserKeysResponse'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+components:
+  schemas:
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - user_id
+        - identity_key_ed25519
+        - dh_key_x25519
+        - nonce
+        - signed_at
+        - signature
+      properties:
+        user_id:
+          type: string
+          description: UUID/string identifier
+        identity_key_ed25519:
+          type: string
+          description: Base64 Ed25519 public key
+        dh_key_x25519:
+          type: string
+          description: Base64 X25519 public key
+        nonce:
+          type: string
+          description: Base64 random 16-byte nonce
+        signed_at:
+          type: string
+          format: date-time
+        signature:
+          type: string
+          description: Base64 Ed25519 signature over canonical register string
+
+    RegisterResponse:
+      type: object
+      additionalProperties: false
+      required: [ok, user_id, registered_at]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        user_id:
+          type: string
+        registered_at:
+          type: string
+          format: date-time
+
+    UserKeysResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - user_id
+        - identity_key_ed25519
+        - dh_key_x25519
+        - keyset_version
+        - updated_at
+      properties:
+        user_id:
+          type: string
+        identity_key_ed25519:
+          type: string
+        dh_key_x25519:
+          type: string
+        keyset_version:
+          type: integer
+          minimum: 1
+        updated_at:
+          type: string
+          format: date-time
+
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error, request_id]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, retryable]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            retryable:
+              type: boolean
+        request_id:
+          type: string

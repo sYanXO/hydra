@@ -1,0 +1,18 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hydra-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: hydra
+      POSTGRES_USER: hydra
+      POSTGRES_PASSWORD: hydra
+    ports:
+      - "5432:5432"
+    volumes:
+      - hydra_pg_data:/var/lib/postgresql/data
+
+volumes:
+  hydra_pg_data:

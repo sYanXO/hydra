@@ -1,0 +1,12 @@
+{
+  "name": "register-v1-deterministic-vector-001",
+  "request": {
+    "user_id": "11111111-1111-1111-1111-111111111111",
+    "identity_key_ed25519": "ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=",
+    "dh_key_x25519": "ZHVtbXkteDI1NTE5LXB1YmxpYy1rZXktMzJieXRlcyEhIQ==",
+    "nonce": "MDEyMzQ1Njc4OWFiY2RlZg==",
+    "signed_at": "2026-04-22T10:30:00Z",
+    "signature": "mFU5jUzZY4uWhaRES0fLfZohPIstT+Zbz4Hk42EJrbvFXNb8zFT2Uc2oQxJeABQlxTEacy70dvgjvMrhNuXuAQ=="
+  },
+  "expected_canonical": "pi-chat-register-v1\nuser_id:11111111-1111-1111-1111-111111111111\nidentity_key_ed25519:ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=\ndh_key_x25519:ZHVtbXkteDI1NTE5LXB1YmxpYy1rZXktMzJieXRlcyEhIQ==\nnonce:MDEyMzQ1Njc4OWFiY2RlZg==\nsigned_at:2026-04-22T10:30:00Z"
+}
