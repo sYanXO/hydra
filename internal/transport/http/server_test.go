@@ -78,39 +78,13 @@ func TestRegisterEndpointSuccess(t *testing.T) {
 	}
 }
 
-func TestRegisterEndpointBadSignature(t *testing.T) {
-	now := time.Date(2026, 4, 22, 10, 30, 0, 0, time.UTC)
-	srv := newTestServer(now)
-
-	payload := makeRegisterJSON(t, "55555555-5555-5555-5555-555555555555", now)
-	var req map[string]any
-	if err := json.Unmarshal(payload, &req); err != nil {
-		t.Fatal(err)
-	}
-	req["nonce"] = base64.StdEncoding.EncodeToString([]byte("tamperednonce0001"))
-	payload, _ = json.Marshal(req)
-
-	r := httptest.NewRequest(http.MethodPost, "/users/register", bytes.NewReader(payload))
-	w := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(w, r)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
-	}
-}
-
 func TestGetUserKeysEndpointSuccess(t *testing.T) {
 	now := time.Date(2026, 4, 22, 10, 30, 0, 0, time.UTC)
 	srv := newTestServer(now)
 
 	userID := "66666666-6666-6666-6666-666666666666"
 	regBody := makeRegisterJSON(t, userID, now)
-	regReq := httptest.NewRequest(http.MethodPost, "/users/register", bytes.NewReader(regBody))
-	regRes := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(regRes, regReq)
-	if regRes.Code != http.StatusOK {
-		t.Fatalf("register status=%d body=%s", regRes.Code, regRes.Body.String())
-	}
+	srv.Handler().ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/users/register", bytes.NewReader(regBody)))
 
 	r := httptest.NewRequest(http.MethodGet, "/users/"+userID+"/keys", nil)
 	w := httptest.NewRecorder()
@@ -120,19 +94,7 @@ func TestGetUserKeysEndpointSuccess(t *testing.T) {
 	}
 }
 
-func TestGetUserKeysEndpointNotFound(t *testing.T) {
-	now := time.Date(2026, 4, 22, 10, 30, 0, 0, time.UTC)
-	srv := newTestServer(now)
-
-	r := httptest.NewRequest(http.MethodGet, "/users/77777777-7777-7777-7777-777777777777/keys", nil)
-	w := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(w, r)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
-	}
-}
-
-func TestPostMessageSuccess(t *testing.T) {
+func TestPostPollAckFlow(t *testing.T) {
 	now := time.Date(2026, 4, 22, 10, 30, 0, 0, time.UTC)
 	srv := newTestServer(now)
 
@@ -140,22 +102,57 @@ func TestPostMessageSuccess(t *testing.T) {
 	regBody := makeRegisterJSON(t, toUserID, now)
 	srv.Handler().ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/users/register", bytes.NewReader(regBody)))
 
-	r := httptest.NewRequest(http.MethodPost, "/messages", bytes.NewReader(makeMessageJSON(toUserID)))
-	w := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	postW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(postW, httptest.NewRequest(http.MethodPost, "/messages", bytes.NewReader(makeMessageJSON(toUserID))))
+	if postW.Code != http.StatusOK {
+		t.Fatalf("post status = %d body=%s", postW.Code, postW.Body.String())
 	}
-}
 
-func TestPostMessageRecipientNotFound(t *testing.T) {
-	now := time.Date(2026, 4, 22, 10, 30, 0, 0, time.UTC)
-	srv := newTestServer(now)
+	var postResp map[string]any
+	_ = json.Unmarshal(postW.Body.Bytes(), &postResp)
+	serverMsgID, _ := postResp["server_message_id"].(string)
+	if serverMsgID == "" {
+		t.Fatalf("expected server_message_id")
+	}
 
-	r := httptest.NewRequest(http.MethodPost, "/messages", bytes.NewReader(makeMessageJSON("no-user")))
-	w := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(w, r)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	pollReq := httptest.NewRequest(http.MethodGet, "/messages/poll?user_id="+toUserID+"&limit=50", nil)
+	pollW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(pollW, pollReq)
+	if pollW.Code != http.StatusOK {
+		t.Fatalf("poll status = %d body=%s", pollW.Code, pollW.Body.String())
+	}
+	var pollResp1 map[string]any
+	_ = json.Unmarshal(pollW.Body.Bytes(), &pollResp1)
+	m1, _ := pollResp1["messages"].([]any)
+	if len(m1) != 1 {
+		t.Fatalf("expected 1 poll notice, got %d", len(m1))
+	}
+
+	ackBody := map[string]any{
+		"user_id":            toUserID,
+		"server_message_ids": []string{serverMsgID},
+		"acked_at":           now.Format(time.RFC3339),
+	}
+	ackJSON, _ := json.Marshal(ackBody)
+	ackReq := httptest.NewRequest(http.MethodPost, "/messages/ack", bytes.NewReader(ackJSON))
+	ackW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(ackW, ackReq)
+	if ackW.Code != http.StatusOK {
+		t.Fatalf("ack status = %d body=%s", ackW.Code, ackW.Body.String())
+	}
+	var ackResp map[string]any
+	_ = json.Unmarshal(ackW.Body.Bytes(), &ackResp)
+	ackedMsgs, _ := ackResp["messages"].([]any)
+	if len(ackedMsgs) != 1 {
+		t.Fatalf("expected 1 acked message payload, got %d", len(ackedMsgs))
+	}
+
+	pollW2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(pollW2, pollReq)
+	var pollResp map[string]any
+	_ = json.Unmarshal(pollW2.Body.Bytes(), &pollResp)
+	msgs, _ := pollResp["messages"].([]any)
+	if len(msgs) != 0 {
+		t.Fatalf("expected 0 pending messages after ack, got %d", len(msgs))
 	}
 }

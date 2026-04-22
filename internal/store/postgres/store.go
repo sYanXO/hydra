@@ -3,6 +3,8 @@ package postgres
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	storetypes "hydra/internal/store/types"
@@ -63,6 +65,108 @@ func (s *Store) CreateMessage(m storetypes.Message) (bool, error) {
 		return false, err
 	}
 	return affected == 1, nil
+}
+
+func (s *Store) ListPendingMessages(toUserID string, limit int) ([]storetypes.Message, error) {
+	rows, err := s.db.Query(`
+		SELECT server_message_id, to_user_id, from_user_id, message_id, envelope_json, status, received_at, delivered_at, expires_at
+		FROM messages
+		WHERE to_user_id = $1 AND status = 'pending'
+		ORDER BY received_at ASC
+		LIMIT $2
+	`, toUserID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]storetypes.Message, 0)
+	for rows.Next() {
+		var m storetypes.Message
+		var deliveredAt sql.NullTime
+		if err := rows.Scan(&m.ServerMessageID, &m.ToUserID, &m.FromUserID, &m.MessageID, &m.EnvelopeJSON, &m.Status, &m.ReceivedAt, &deliveredAt, &m.ExpiresAt); err != nil {
+			return nil, err
+		}
+		if deliveredAt.Valid {
+			t := deliveredAt.Time.UTC()
+			m.DeliveredAt = &t
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *Store) ListPendingMessagesByIDs(toUserID string, serverMessageIDs []string) ([]storetypes.Message, error) {
+	if len(serverMessageIDs) == 0 {
+		return []storetypes.Message{}, nil
+	}
+	placeholders := make([]string, len(serverMessageIDs))
+	args := make([]any, 0, len(serverMessageIDs)+1)
+	args = append(args, toUserID)
+	for i, id := range serverMessageIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args = append(args, id)
+	}
+	query := fmt.Sprintf(`
+		SELECT server_message_id, to_user_id, from_user_id, message_id, envelope_json, status, received_at, delivered_at, expires_at
+		FROM messages
+		WHERE to_user_id = $1 AND status = 'pending' AND server_message_id IN (%s)
+		ORDER BY received_at ASC
+	`, strings.Join(placeholders, ","))
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]storetypes.Message, 0)
+	for rows.Next() {
+		var m storetypes.Message
+		var deliveredAt sql.NullTime
+		if err := rows.Scan(&m.ServerMessageID, &m.ToUserID, &m.FromUserID, &m.MessageID, &m.EnvelopeJSON, &m.Status, &m.ReceivedAt, &deliveredAt, &m.ExpiresAt); err != nil {
+			return nil, err
+		}
+		if deliveredAt.Valid {
+			t := deliveredAt.Time.UTC()
+			m.DeliveredAt = &t
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *Store) AckMessages(toUserID string, serverMessageIDs []string, ackedAt time.Time) (int, error) {
+	if len(serverMessageIDs) == 0 {
+		return 0, nil
+	}
+	placeholders := make([]string, len(serverMessageIDs))
+	args := make([]any, 0, len(serverMessageIDs)+2)
+	args = append(args, ackedAt.UTC(), toUserID)
+	for i, id := range serverMessageIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+3)
+		args = append(args, id)
+	}
+
+	query := fmt.Sprintf(`
+		UPDATE messages
+		SET status = 'delivered', delivered_at = $1::timestamptz, expires_at = ($1::timestamptz + interval '24 hours')
+		WHERE to_user_id = $2 AND status = 'pending' AND server_message_id IN (%s)
+	`, strings.Join(placeholders, ","))
+	res, err := s.db.Exec(query, args...)
+	if err != nil {
+		return 0, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(affected), nil
 }
 
 func (s *Store) CheckAndStoreNonce(userID, nonce string, now time.Time, ttl time.Duration) (bool, error) {

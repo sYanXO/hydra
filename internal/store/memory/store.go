@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -48,6 +49,72 @@ func (s *Store) CreateMessage(m storetypes.Message) (bool, error) {
 	}
 	s.messages[k] = m
 	return true, nil
+}
+
+func (s *Store) ListPendingMessages(toUserID string, limit int) ([]storetypes.Message, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]storetypes.Message, 0)
+	for _, m := range s.messages {
+		if m.ToUserID == toUserID && m.Status == "pending" {
+			out = append(out, m)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ReceivedAt.Before(out[j].ReceivedAt)
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (s *Store) ListPendingMessagesByIDs(toUserID string, serverMessageIDs []string) ([]storetypes.Message, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := make(map[string]struct{}, len(serverMessageIDs))
+	for _, id := range serverMessageIDs {
+		ids[id] = struct{}{}
+	}
+	out := make([]storetypes.Message, 0)
+	for _, m := range s.messages {
+		if m.ToUserID != toUserID || m.Status != "pending" {
+			continue
+		}
+		if _, ok := ids[m.ServerMessageID]; !ok {
+			continue
+		}
+		out = append(out, m)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].ReceivedAt.Before(out[j].ReceivedAt)
+	})
+	return out, nil
+}
+
+func (s *Store) AckMessages(toUserID string, serverMessageIDs []string, ackedAt time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make(map[string]struct{}, len(serverMessageIDs))
+	for _, id := range serverMessageIDs {
+		ids[id] = struct{}{}
+	}
+	count := 0
+	for k, m := range s.messages {
+		if m.ToUserID != toUserID || m.Status != "pending" {
+			continue
+		}
+		if _, ok := ids[m.ServerMessageID]; !ok {
+			continue
+		}
+		m.Status = "delivered"
+		t := ackedAt.UTC()
+		m.DeliveredAt = &t
+		m.ExpiresAt = t.Add(24 * time.Hour)
+		s.messages[k] = m
+		count++
+	}
+	return count, nil
 }
 
 func (s *Store) CheckAndStoreNonce(userID, nonce string, now time.Time, ttl time.Duration) (bool, error) {

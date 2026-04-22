@@ -18,5 +18,6 @@ type Message struct {
 	EnvelopeJSON    []byte
 	Status          string
 	ReceivedAt      time.Time
+	DeliveredAt     *time.Time
 	ExpiresAt       time.Time
 }

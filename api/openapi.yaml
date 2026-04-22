@@ -129,6 +129,73 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
 
+  /messages/poll:
+    get:
+      summary: Poll pending messages for a user
+      operationId: pollMessages
+      parameters:
+        - in: query
+          name: user_id
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+      responses:
+        '200':
+          description: Pending messages
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PollMessagesResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /messages/ack:
+    post:
+      summary: Acknowledge delivered messages
+      operationId: ackMessages
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AckMessagesRequest'
+      responses:
+        '200':
+          description: Acknowledgement accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AckMessagesResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
 components:
   schemas:
     RegisterRequest:
@@ -250,6 +317,77 @@ components:
         received_at:
           type: string
           format: date-time
+
+    PollMessageItem:
+      type: object
+      additionalProperties: false
+      required: [server_message_id, from_user_id, received_at]
+      properties:
+        server_message_id:
+          type: string
+        from_user_id:
+          type: string
+        received_at:
+          type: string
+          format: date-time
+
+    PollMessagesResponse:
+      type: object
+      additionalProperties: false
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/PollMessageItem'
+
+    AckMessagesRequest:
+      type: object
+      additionalProperties: false
+      required: [user_id, server_message_ids, acked_at]
+      properties:
+        user_id:
+          type: string
+        server_message_ids:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        acked_at:
+          type: string
+          format: date-time
+
+    AckedMessageItem:
+      type: object
+      additionalProperties: false
+      required: [server_message_id, envelope, received_at]
+      properties:
+        server_message_id:
+          type: string
+        envelope:
+          $ref: '#/components/schemas/MessageEnvelopeRequest'
+        received_at:
+          type: string
+          format: date-time
+
+    AckMessagesResponse:
+      type: object
+      additionalProperties: false
+      required: [ok, acked_count, acked_at, messages]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        acked_count:
+          type: integer
+          minimum: 0
+        acked_at:
+          type: string
+          format: date-time
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/AckedMessageItem'
 
     ErrorEnvelope:
       type: object

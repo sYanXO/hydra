@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"hydra/internal/protocol"
@@ -33,6 +34,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /users/register", s.handleRegister)
 	s.mux.HandleFunc("GET /users/{id}/keys", s.handleGetUserKeys)
 	s.mux.HandleFunc("POST /messages", s.handlePostMessage)
+	s.mux.HandleFunc("GET /messages/poll", s.handlePollMessages)
+	s.mux.HandleFunc("POST /messages/ack", s.handleAckMessages)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -131,6 +134,86 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request) {
 		"ok":                true,
 		"server_message_id": result.ServerMessageID,
 		"received_at":       result.ReceivedAt.Format(time.RFC3339),
+	})
+}
+
+func (s *Server) handlePollMessages(w http.ResponseWriter, r *http.Request) {
+	userID := r.URL.Query().Get("user_id")
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_request", "Invalid limit.", false)
+			return
+		}
+		limit = parsed
+	}
+	messages, err := s.messageService.PollMessages(userID, limit)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrBadRequest):
+			writeError(w, http.StatusBadRequest, "bad_request", "Invalid poll request.", false)
+		case errors.Is(err, service.ErrUserNotFound):
+			writeError(w, http.StatusNotFound, "user_not_found", "No user exists for the provided user_id.", false)
+		default:
+			writeError(w, http.StatusInternalServerError, "internal_error", "Internal server error.", true)
+		}
+		return
+	}
+	items := make([]map[string]any, 0, len(messages))
+	for _, m := range messages {
+		items = append(items, map[string]any{
+			"server_message_id": m.ServerMessageID,
+			"from_user_id":      m.FromUserID,
+			"received_at":       m.ReceivedAt.Format(time.RFC3339),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"messages": items})
+}
+
+type ackRequest struct {
+	UserID           string   `json:"user_id"`
+	ServerMessageIDs []string `json:"server_message_ids"`
+	AckedAt          string   `json:"acked_at"`
+}
+
+func (s *Server) handleAckMessages(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+	var req ackRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Malformed JSON.", false)
+		return
+	}
+	ackedAt, err := time.Parse(time.RFC3339, req.AckedAt)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Invalid acked_at.", false)
+		return
+	}
+	res, err := s.messageService.AckMessages(req.UserID, req.ServerMessageIDs, ackedAt)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrBadRequest):
+			writeError(w, http.StatusBadRequest, "bad_request", "Invalid ack request.", false)
+		case errors.Is(err, service.ErrUserNotFound):
+			writeError(w, http.StatusNotFound, "user_not_found", "No user exists for the provided user_id.", false)
+		default:
+			writeError(w, http.StatusInternalServerError, "internal_error", "Internal server error.", true)
+		}
+		return
+	}
+	items := make([]map[string]any, 0, len(res.Messages))
+	for _, m := range res.Messages {
+		items = append(items, map[string]any{
+			"server_message_id": m.ServerMessageID,
+			"envelope":          m.Envelope,
+			"received_at":       m.ReceivedAt.Format(time.RFC3339),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":          true,
+		"acked_count": res.AckedCount,
+		"acked_at":    res.AckedAt.Format(time.RFC3339),
+		"messages":    items,
 	})
 }
 
