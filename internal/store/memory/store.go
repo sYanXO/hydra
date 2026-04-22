@@ -9,17 +9,21 @@ import (
 )
 
 type Store struct {
-	mu       sync.RWMutex
-	users    map[string]storetypes.User
-	nonces   map[string]map[string]time.Time
-	messages map[string]storetypes.Message
+	mu          sync.RWMutex
+	users       map[string]storetypes.User
+	handlesByID map[string]storetypes.UserHandle
+	handleIndex map[string]string
+	nonces      map[string]map[string]time.Time
+	messages    map[string]storetypes.Message
 }
 
 func New() *Store {
 	return &Store{
-		users:    make(map[string]storetypes.User),
-		nonces:   make(map[string]map[string]time.Time),
-		messages: make(map[string]storetypes.Message),
+		users:       make(map[string]storetypes.User),
+		handlesByID: make(map[string]storetypes.UserHandle),
+		handleIndex: make(map[string]string),
+		nonces:      make(map[string]map[string]time.Time),
+		messages:    make(map[string]storetypes.Message),
 	}
 }
 
@@ -36,6 +40,43 @@ func (s *Store) CreateUser(u storetypes.User) (bool, error) {
 func (s *Store) GetUser(userID string) (storetypes.User, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	u, ok := s.users[userID]
+	return u, ok, nil
+}
+
+func (s *Store) CreateHandle(h storetypes.UserHandle) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[h.UserID]; !ok {
+		return false, nil
+	}
+	if _, exists := s.handlesByID[h.UserID]; exists {
+		return false, nil
+	}
+	key := h.UsernameNorm + "#" + h.Discriminator
+	if _, exists := s.handleIndex[key]; exists {
+		return false, nil
+	}
+	h.Active = true
+	s.handlesByID[h.UserID] = h
+	s.handleIndex[key] = h.UserID
+	return true, nil
+}
+
+func (s *Store) GetActiveHandle(userID string) (storetypes.UserHandle, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	h, ok := s.handlesByID[userID]
+	return h, ok, nil
+}
+
+func (s *Store) GetUserByHandle(usernameNorm, discriminator string) (storetypes.User, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	userID, ok := s.handleIndex[usernameNorm+"#"+discriminator]
+	if !ok {
+		return storetypes.User{}, false, nil
+	}
 	u, ok := s.users[userID]
 	return u, ok, nil
 }

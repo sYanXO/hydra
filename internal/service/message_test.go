@@ -41,6 +41,21 @@ func TestSendMessageSuccess(t *testing.T) {
 	}
 }
 
+func TestSendMessageRejectsSelfMessage(t *testing.T) {
+	store := memory.New()
+	now := time.Date(2026, 4, 22, 10, 30, 0, 0, time.UTC)
+	_, _ = store.CreateUser(storetypes.User{UserID: "alice"})
+
+	svc := NewMessageService(store)
+	svc.SetNowFnForTest(func() time.Time { return now })
+	env := testEnvelope(now)
+	env.ToUserID = "alice"
+
+	if _, err := svc.SendMessage(env); err == nil {
+		t.Fatalf("expected self-message rejection")
+	}
+}
+
 func TestSendMessageDuplicate(t *testing.T) {
 	store := memory.New()
 	now := time.Date(2026, 4, 22, 10, 30, 0, 0, time.UTC)

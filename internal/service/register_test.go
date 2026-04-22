@@ -43,6 +43,9 @@ func TestRegisterSuccess(t *testing.T) {
 	if res.UserID != req.UserID {
 		t.Fatalf("unexpected user id: got %s want %s", res.UserID, req.UserID)
 	}
+	if res.Handle.Full() == "" {
+		t.Fatalf("expected generated handle")
+	}
 }
 
 func TestRegisterRejectsReplayNonce(t *testing.T) {
@@ -107,5 +110,16 @@ func TestGetUserKeys(t *testing.T) {
 	}
 	if keys.UserID != req.UserID || keys.KeysetVersion != 1 {
 		t.Fatalf("unexpected keys result: %+v", keys)
+	}
+	if keys.Handle.Full() == "" {
+		t.Fatalf("expected handle in keys result")
+	}
+
+	keysByHandle, err := svc.GetUserKeysByHandle(keys.Handle.UsernameNorm, keys.Handle.Discriminator)
+	if err != nil {
+		t.Fatalf("GetUserKeysByHandle error: %v", err)
+	}
+	if keysByHandle.UserID != req.UserID {
+		t.Fatalf("unexpected user id from handle lookup: %+v", keysByHandle)
 	}
 }

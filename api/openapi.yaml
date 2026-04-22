@@ -93,6 +93,41 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
 
+  /users/by-handle/{username}/{discriminator}/keys:
+    get:
+      summary: Get a user's public key bundle by handle
+      operationId: getUserKeysByHandle
+      parameters:
+        - in: path
+          name: username
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: discriminator
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Public keys found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserKeysResponse'
+        '400':
+          description: Invalid handle
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
   /messages:
     post:
       summary: Send encrypted message envelope
@@ -212,6 +247,9 @@ components:
         user_id:
           type: string
           description: UUID/string identifier
+        requested_username:
+          type: string
+          description: Optional preferred handle base. Lowercase letters, digits, underscore, length 3-20.
         identity_key_ed25519:
           type: string
           description: Base64 Ed25519 public key
@@ -228,10 +266,22 @@ components:
           type: string
           description: Base64 Ed25519 signature over canonical register string
 
+    Handle:
+      type: object
+      additionalProperties: false
+      required: [username, discriminator, full]
+      properties:
+        username:
+          type: string
+        discriminator:
+          type: string
+        full:
+          type: string
+
     RegisterResponse:
       type: object
       additionalProperties: false
-      required: [ok, user_id, registered_at]
+      required: [ok, user_id, registered_at, handle]
       properties:
         ok:
           type: boolean
@@ -241,6 +291,8 @@ components:
         registered_at:
           type: string
           format: date-time
+        handle:
+          $ref: '#/components/schemas/Handle'
 
     UserKeysResponse:
       type: object
@@ -251,6 +303,7 @@ components:
         - dh_key_x25519
         - keyset_version
         - updated_at
+        - handle
       properties:
         user_id:
           type: string
@@ -264,6 +317,8 @@ components:
         updated_at:
           type: string
           format: date-time
+        handle:
+          $ref: '#/components/schemas/Handle'
 
     MessageEnvelopeRequest:
       type: object

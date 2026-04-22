@@ -51,6 +51,63 @@ func (s *Store) GetUser(userID string) (storetypes.User, bool, error) {
 	return u, true, nil
 }
 
+func (s *Store) CreateHandle(h storetypes.UserHandle) (bool, error) {
+	res, err := s.db.Exec(`
+		INSERT INTO user_handles (user_id, username_norm, discriminator, active, created_at)
+		VALUES ($1, $2, $3, true, $4)
+		ON CONFLICT DO NOTHING
+	`, h.UserID, h.UsernameNorm, h.Discriminator, h.CreatedAt)
+	if err != nil {
+		return false, err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return affected == 1, nil
+}
+
+func (s *Store) GetActiveHandle(userID string) (storetypes.UserHandle, bool, error) {
+	var h storetypes.UserHandle
+	var deactivatedAt sql.NullTime
+	err := s.db.QueryRow(`
+		SELECT user_id, username_norm, discriminator, active, created_at, deactivated_at
+		FROM user_handles
+		WHERE user_id = $1 AND active = true
+		LIMIT 1
+	`, userID).Scan(&h.UserID, &h.UsernameNorm, &h.Discriminator, &h.Active, &h.CreatedAt, &deactivatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return storetypes.UserHandle{}, false, nil
+	}
+	if err != nil {
+		return storetypes.UserHandle{}, false, err
+	}
+	if deactivatedAt.Valid {
+		t := deactivatedAt.Time.UTC()
+		h.DeactivatedAt = &t
+	}
+	return h, true, nil
+}
+
+func (s *Store) GetUserByHandle(usernameNorm, discriminator string) (storetypes.User, bool, error) {
+	var u storetypes.User
+	var keysetVersion int
+	err := s.db.QueryRow(`
+		SELECT u.user_id, u.identity_key_ed25519, u.dh_key_x25519, u.keyset_version, u.created_at, u.updated_at
+		FROM users u
+		JOIN user_handles h ON h.user_id = u.user_id
+		WHERE h.username_norm = $1 AND h.discriminator = $2 AND h.active = true
+		LIMIT 1
+	`, usernameNorm, discriminator).Scan(&u.UserID, &u.IdentityKeyEd25519, &u.DHKeyX25519, &keysetVersion, &u.CreatedAt, &u.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return storetypes.User{}, false, nil
+	}
+	if err != nil {
+		return storetypes.User{}, false, err
+	}
+	return u, true, nil
+}
+
 func (s *Store) CreateMessage(m storetypes.Message) (bool, error) {
 	res, err := s.db.Exec(`
 		INSERT INTO messages (server_message_id, to_user_id, from_user_id, message_id, envelope_json, status, received_at, expires_at)

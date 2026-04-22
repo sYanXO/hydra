@@ -10,6 +10,15 @@ type User struct {
 	UpdatedAt          time.Time
 }
 
+type UserHandle struct {
+	UserID         string
+	UsernameNorm   string
+	Discriminator  string
+	Active         bool
+	CreatedAt      time.Time
+	DeactivatedAt  *time.Time
+}
+
 type Message struct {
 	ServerMessageID string
 	ToUserID        string

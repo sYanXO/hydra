@@ -41,6 +41,9 @@ func (m MessageEnvelope) ValidateBasic() error {
 		strings.TrimSpace(m.Signature) == "" {
 		return ErrInvalidEnvelope
 	}
+	if m.FromUserID == m.ToUserID {
+		return ErrInvalidEnvelope
+	}
 	if _, err := base64.StdEncoding.DecodeString(m.SenderIdentityKeyEd25519); err != nil {
 		return ErrInvalidEnvelope
 	}

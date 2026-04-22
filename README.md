@@ -74,6 +74,14 @@ curl -s http://localhost:8080/users/<user_id>/keys
 5. Send message to the other user id
 6. Poll inbox and ack messages
 
+You can now use either `user_id` or `username#1234` in the web client recipient field.
+
+Lookup keys by handle:
+
+```bash
+curl -s http://localhost:8080/users/by-handle/<username>/<discriminator>/keys
+```
+
 ## Quality checks
 
 ```bash

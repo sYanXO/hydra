@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -33,6 +34,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("POST /users/register", s.handleRegister)
 	s.mux.HandleFunc("GET /users/{id}/keys", s.handleGetUserKeys)
+	s.mux.HandleFunc("GET /users/by-handle/{username}/{discriminator}/keys", s.handleGetUserKeysByHandle)
 	s.mux.HandleFunc("POST /messages", s.handlePostMessage)
 	s.mux.HandleFunc("GET /messages/poll", s.handlePollMessages)
 	s.mux.HandleFunc("POST /messages/ack", s.handleAckMessages)
@@ -67,6 +69,8 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "nonce_reused", "Nonce has already been used for this user.", false)
 		case errors.Is(err, protocol.ErrUserAlreadyExists):
 			writeError(w, http.StatusConflict, "user_already_registered", "User already exists.", false)
+		case errors.Is(err, service.ErrInvalidUsername):
+			writeError(w, http.StatusBadRequest, "invalid_username", "requested_username is invalid.", false)
 		default:
 			if err.Error() == "bad_request" {
 				writeError(w, http.StatusBadRequest, "bad_request", "Missing required fields.", false)
@@ -81,6 +85,11 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		"ok":            true,
 		"user_id":       result.UserID,
 		"registered_at": result.RegisteredAt.Format(time.RFC3339),
+		"handle": map[string]any{
+			"username":      result.Handle.UsernameNorm,
+			"discriminator": result.Handle.Discriminator,
+			"full":          result.Handle.Full(),
+		},
 	})
 }
 
@@ -105,6 +114,44 @@ func (s *Server) handleGetUserKeys(w http.ResponseWriter, r *http.Request) {
 		"dh_key_x25519":        result.DHKeyX25519,
 		"keyset_version":       result.KeysetVersion,
 		"updated_at":           result.UpdatedAt.Format(time.RFC3339),
+		"handle": map[string]any{
+			"username":      result.Handle.UsernameNorm,
+			"discriminator": result.Handle.Discriminator,
+			"full":          result.Handle.Full(),
+		},
+	})
+}
+
+func (s *Server) handleGetUserKeysByHandle(w http.ResponseWriter, r *http.Request) {
+	username := r.PathValue("username")
+	discriminator := r.PathValue("discriminator")
+	if username == "" || discriminator == "" {
+		writeError(w, http.StatusBadRequest, "bad_request", "Missing username or discriminator.", false)
+		return
+	}
+	result, err := s.registerService.GetUserKeysByHandle(username, discriminator)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidUsername):
+			writeError(w, http.StatusBadRequest, "invalid_username", "Invalid username or discriminator.", false)
+		case errors.Is(err, service.ErrUserNotFound):
+			writeError(w, http.StatusNotFound, "user_not_found", "No user exists for the provided handle.", false)
+		default:
+			writeError(w, http.StatusInternalServerError, "internal_error", "Internal server error.", true)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user_id":              result.UserID,
+		"identity_key_ed25519": result.IdentityKeyEd25519,
+		"dh_key_x25519":        result.DHKeyX25519,
+		"keyset_version":       result.KeysetVersion,
+		"updated_at":           result.UpdatedAt.Format(time.RFC3339),
+		"handle": map[string]any{
+			"username":      result.Handle.UsernameNorm,
+			"discriminator": result.Handle.Discriminator,
+			"full":          result.Handle.Full(),
+		},
 	})
 }
 
@@ -197,7 +244,9 @@ func (s *Server) handleAckMessages(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, service.ErrUserNotFound):
 			writeError(w, http.StatusNotFound, "user_not_found", "No user exists for the provided user_id.", false)
 		default:
-			writeError(w, http.StatusInternalServerError, "internal_error", "Internal server error.", true)
+			reqID := newRequestID()
+			log.Printf("request_id=%s route=POST /messages/ack user_id=%s server_message_ids=%d error=%v", reqID, req.UserID, len(req.ServerMessageIDs), err)
+			writeErrorWithRequestID(w, http.StatusInternalServerError, "internal_error", "Internal server error.", true, reqID)
 		}
 		return
 	}
@@ -227,7 +276,11 @@ type apiError struct {
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string, retryable bool) {
-	resp := apiError{RequestID: newRequestID()}
+	writeErrorWithRequestID(w, status, code, message, retryable, newRequestID())
+}
+
+func writeErrorWithRequestID(w http.ResponseWriter, status int, code, message string, retryable bool, requestID string) {
+	resp := apiError{RequestID: requestID}
 	resp.Error.Code = code
 	resp.Error.Message = message
 	resp.Error.Retryable = retryable

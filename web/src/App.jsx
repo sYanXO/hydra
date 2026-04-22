@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import nacl from 'tweetnacl';
 
 function loadIdentity() {
@@ -73,6 +73,13 @@ function fromB64(b64) {
   return out;
 }
 
+function parseHandle(raw) {
+  const s = (raw || '').trim();
+  const m = s.match(/^([a-z0-9_]{3,20})#([0-9]{4})$/i);
+  if (!m) return null;
+  return { username: m[1].toLowerCase(), discriminator: m[2] };
+}
+
 export default function App() {
   const [identity, setIdentity] = useState(loadIdentity());
   const [toUserId, setToUserId] = useState('');
@@ -81,8 +88,10 @@ export default function App() {
   const [receivedMessages, setReceivedMessages] = useState([]);
   const [logLines, setLogLines] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [ackInFlight, setAckInFlight] = useState(false);
 
   const userId = identity?.user_id || 'not generated';
+  const userHandle = identity?.handle?.full || 'not registered';
   const hasIdentity = Boolean(identity);
 
   function log(line) {
@@ -106,6 +115,28 @@ export default function App() {
     log(`generated identity ${next.user_id}`);
   }
 
+  async function copyHandle() {
+    const full = identity?.handle?.full;
+    if (!full) return log('register first to get a handle');
+    try {
+      await navigator.clipboard.writeText(full);
+      log(`copied handle ${full}`);
+    } catch (e) {
+      log(`copy handle failed: ${e.message}`);
+    }
+  }
+
+  async function resolveRecipientUserID(raw) {
+    const handle = parseHandle(raw);
+    if (!handle) return raw.trim();
+    const res = await fetch(`/users/by-handle/${encodeURIComponent(handle.username)}/${encodeURIComponent(handle.discriminator)}/keys`);
+    const data = await res.json();
+    if (!res.ok || !data.user_id) {
+      throw new Error(`resolve recipient failed (${res.status})`);
+    }
+    return data.user_id;
+  }
+
   async function registerUser() {
     if (!identity) return log('generate identity first');
     setBusy(true);
@@ -126,6 +157,9 @@ export default function App() {
       });
       const data = await res.json();
       log(`register ${res.status}: ${JSON.stringify(data)}`);
+      if (res.ok && data?.handle) {
+        persistIdentity({ ...identity, handle: data.handle });
+      }
     } catch (e) {
       log(`register failed: ${e.message}`);
     } finally {
@@ -144,11 +178,15 @@ export default function App() {
         content_version: 1,
         created_at: new Date().toISOString()
       });
+      const resolvedRecipient = await resolveRecipientUserID(toUserId);
+      if (resolvedRecipient === identity.user_id) {
+        return log('cannot send message to yourself');
+      }
       const payload = {
         version: 1,
         message_id: crypto.randomUUID(),
         from_user_id: identity.user_id,
-        to_user_id: toUserId.trim(),
+        to_user_id: resolvedRecipient,
         sender_identity_key_ed25519: identity.identity_key_ed25519,
         sender_dh_key_x25519: identity.dh_key_x25519,
         nonce: toB64(randomBytes(24)),
@@ -164,7 +202,10 @@ export default function App() {
       });
       const data = await res.json();
       log(`send ${res.status}: ${JSON.stringify(data)}`);
-      if (res.ok) setMessageBody('');
+      if (res.ok) {
+        setMessageBody('');
+        await pollMessages({ background: true });
+      }
     } catch (e) {
       log(`send failed: ${e.message}`);
     } finally {
@@ -172,24 +213,30 @@ export default function App() {
     }
   }
 
-  async function pollMessages() {
-    if (!identity) return log('generate identity first');
-    setBusy(true);
+  async function pollMessages(options = {}) {
+    const background = options.background === true;
+    if (!identity) {
+      if (!background) log('generate identity first');
+      return;
+    }
+    if (!background) setBusy(true);
     try {
       const res = await fetch(`/messages/poll?user_id=${encodeURIComponent(identity.user_id)}&limit=50`);
       const data = await res.json();
-      log(`poll ${res.status}: ${JSON.stringify(data)}`);
+      if (!background) log(`poll ${res.status}: ${JSON.stringify(data)}`);
       if (Array.isArray(data.messages)) setPendingNotices(data.messages);
     } catch (e) {
-      log(`poll failed: ${e.message}`);
+      if (!background) log(`poll failed: ${e.message}`);
     } finally {
-      setBusy(false);
+      if (!background) setBusy(false);
     }
   }
 
   async function ackAll() {
     if (!identity) return log('generate identity first');
     if (!pendingNotices.length) return log('no pending notifications to ack');
+    if (ackInFlight) return log('ack already in progress');
+    setAckInFlight(true);
     setBusy(true);
     try {
       const body = {
@@ -205,21 +252,33 @@ export default function App() {
       const data = await res.json();
       log(`ack ${res.status}: ${JSON.stringify(data)}`);
       if (res.ok && Array.isArray(data.messages)) {
+        if ((data.acked_count || 0) === 0) {
+          log('nothing acked (possibly already acknowledged or stale notices)');
+        }
         const decoded = data.messages.map((m) => ({
           server_message_id: m.server_message_id,
           from_user_id: m.envelope?.from_user_id,
           preview: decodeMessage(m.envelope?.ciphertext),
           received_at: m.received_at
         }));
-        setReceivedMessages((prev) => [...decoded, ...prev]);
+        if (decoded.length) setReceivedMessages((prev) => [...decoded, ...prev]);
         setPendingNotices([]);
       }
     } catch (e) {
       log(`ack failed: ${e.message}`);
     } finally {
       setBusy(false);
+      setAckInFlight(false);
     }
   }
+
+  useEffect(() => {
+    if (!identity) return undefined;
+    const id = setInterval(() => {
+      pollMessages({ background: true });
+    }, 10000);
+    return () => clearInterval(id);
+  }, [identity]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
@@ -232,6 +291,9 @@ export default function App() {
           <div className="rounded-lg border border-slate-800 bg-slate-900 px-4 py-3 text-sm">
             <div className="text-slate-400">Local user id</div>
             <div className="font-mono break-all mt-1">{userId}</div>
+            <div className="text-slate-400 mt-2">Handle</div>
+            <div className="font-mono break-all mt-1">{userHandle}</div>
+            <button onClick={copyHandle} disabled={!identity?.handle?.full} className="mt-2 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 px-3 py-1.5 text-xs">Copy handle</button>
           </div>
         </header>
 
@@ -249,8 +311,8 @@ export default function App() {
             <h2 className="text-lg font-medium">Send Message</h2>
             <div className="mt-4 space-y-3">
               <div>
-                <label className="text-sm text-slate-300">Recipient user id</label>
-                <input value={toUserId} onChange={(e) => setToUserId(e.target.value)} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 outline-none focus:ring-2 focus:ring-brand-500" placeholder="recipient user id" />
+                <label className="text-sm text-slate-300">Recipient (user id or handle)</label>
+                <input value={toUserId} onChange={(e) => setToUserId(e.target.value)} className="mt-1 w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 outline-none focus:ring-2 focus:ring-brand-500" placeholder="user-id or username#1234" />
               </div>
               <div>
                 <label className="text-sm text-slate-300">Message</label>
@@ -265,7 +327,7 @@ export default function App() {
               <h2 className="text-lg font-medium">Inbox</h2>
               <div className="flex gap-2">
                 <button onClick={pollMessages} disabled={!hasIdentity || busy} className="rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 px-3 py-2 text-sm">Poll notices</button>
-                <button onClick={ackAll} disabled={!hasIdentity || busy || !pendingNotices.length} className="rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 px-3 py-2 text-sm">Ack and fetch</button>
+                <button onClick={ackAll} disabled={!hasIdentity || busy || ackInFlight || !pendingNotices.length} className="rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-50 px-3 py-2 text-sm">{ackInFlight ? 'Acking…' : 'Ack and fetch'}</button>
               </div>
             </div>
 

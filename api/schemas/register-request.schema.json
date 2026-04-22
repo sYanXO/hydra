@@ -17,6 +17,12 @@
       "type": "string",
       "minLength": 1
     },
+    "requested_username": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 20,
+      "pattern": "^[a-zA-Z0-9_]+$"
+    },
     "identity_key_ed25519": {
       "type": "string",
       "minLength": 1,

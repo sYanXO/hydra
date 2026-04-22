@@ -76,6 +76,12 @@ func TestRegisterEndpointSuccess(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
+	var resp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	h, _ := resp["handle"].(map[string]any)
+	if h == nil || h["full"] == "" {
+		t.Fatalf("expected handle in register response: %s", w.Body.String())
+	}
 }
 
 func TestGetUserKeysEndpointSuccess(t *testing.T) {
@@ -91,6 +97,24 @@ func TestGetUserKeysEndpointSuccess(t *testing.T) {
 	srv.Handler().ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	var keysResp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &keysResp)
+	handle, _ := keysResp["handle"].(map[string]any)
+	if handle == nil {
+		t.Fatalf("expected handle in keys response: %s", w.Body.String())
+	}
+	username, _ := handle["username"].(string)
+	discriminator, _ := handle["discriminator"].(string)
+	if username == "" || discriminator == "" {
+		t.Fatalf("invalid handle in keys response: %s", w.Body.String())
+	}
+
+	byHandleReq := httptest.NewRequest(http.MethodGet, "/users/by-handle/"+username+"/"+discriminator+"/keys", nil)
+	byHandleW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(byHandleW, byHandleReq)
+	if byHandleW.Code != http.StatusOK {
+		t.Fatalf("by-handle status = %d body=%s", byHandleW.Code, byHandleW.Body.String())
 	}
 }
 

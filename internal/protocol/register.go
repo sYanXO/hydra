@@ -28,6 +28,7 @@ type RegisterRequest struct {
 	Nonce              string `json:"nonce"`
 	SignedAt           string `json:"signed_at"`
 	Signature          string `json:"signature"`
+	RequestedUsername  string `json:"requested_username,omitempty"`
 }
 
 func (r RegisterRequest) CanonicalString() string {
